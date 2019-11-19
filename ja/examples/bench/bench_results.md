@@ -26,7 +26,7 @@
 
 今、C ++よりも高速ではないにしても、全体的には本当に高速です。
 
-note: only tiny changes after adding IsOff check for all neuron-level computation.
+注：すべてのニューロンレベルの計算にIsOffチェックを追加した後は、わずかな変更のみです。
 
 ## Goエマージェント，層毎のスレッド，スレッドプール，最適化された範囲のシナプスコード
 
@@ -60,7 +60,7 @@ note: only tiny changes after adding IsOff check for all neuron-level computatio
 * GINOR:  65.67025  45.09239  36.13568
 ```
 
-# Per Function
+# 機能ごと
 
 大規模なケースに焦点を当てる：
 
