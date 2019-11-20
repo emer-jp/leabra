@@ -2,7 +2,7 @@
 
 [![GoDoc](https://godoc.org/github.com/emer/leabra/pbwm?status.svg)](https://godoc.org/github.com/emer/leabra/pbwm)
 
-# Timing
+# タイミング
 
 ## クオーターとロンガー
 
