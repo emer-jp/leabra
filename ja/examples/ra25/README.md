@@ -26,7 +26,7 @@ NetViewは，テストの間，サイクル毎の更新を表示してくれま�
 
 [ `Params` ]ボタンをクリックすると、一連のパラメーターが表示されます。このデザインと使用については、wikiページ[Params](https://github.com/emer/emergent/wiki/Params)で詳細に説明されています。 `Init`（初期化）を押すと、 `Base` ParamSetが常に適用されます。その後、 `ParamSet`のフィールドに別のParamSetの名前を入力すると、Baseの後に適用され，基本となるパラメータが他のもので上書きされます。
 
-To see any non-default parameter settings, the `Non Def Params` button in the NetView toolbar will show you those, and the `All Params` button will show you *all* of the parameters for every layer and projection in the network.  This is a good way to see all the parameters that are available.
+デフォルト以外のパラメーター設定を確認するには、NetViewツールバーの`Non Def Params`ボタンにそれらを表示し、 `All Params`ボタンにネットワークのすべてのレイヤーと投影の*すべて*のパラメーターを表示します。これは、使用可能なすべてのパラメーターを確認するための良い方法です。
 
 パラメータの実際のパフォーマンスへの影響を判断するには、通常、複数回実行を繰り返して統計値を収集するしかありません。どのように機能するかを確認するには、以下を試してみてください。
 
@@ -38,7 +38,7 @@ To see any non-default parameter settings, the `Non Def Params` button in the Ne
 - 左側の[ `Net` ]ボタンをクリックしてから、レイヤーの1つをクリックし、レイヤーレベルのパラメーター（ `Act` 、 `Inhib` 、 `Learn` ）に移動します。そして、`Prjn`のいずれかをクリックすると、`Learn`における投射のパラメーターを表示できます。  Paramsセットでこれらのパラメーターのいずれかを指定するためのパスを確認できるはずです。
 - ラベルのコンテキストメニュー操作を介して、あらゆるパラメーターへのパスを表示する関数を追加する予定です。
 
-## Running from command line
+## コマンドラインから実行する
 
 コマンドラインで以下を入力してください：
 
@@ -56,7 +56,7 @@ To see any non-default parameter settings, the `Non Def Params` button in the Ne
 
 - Goでは、好きなように整理できます。Goコードの順序に制約はありません。 Pythonでは、すべてのメソッドはメインのSimクラス定義内になければなりませんが、そうでない場合、順序は関係ありません。
 
-- The GUI config and elements are all optional and the -nogui startup arg, along with other args, allows the model to be run without the gui.
+- GUIの構成と要素はすべてオプションであり、-noguiスタートアップ引数と他の引数を使用すると、GUIなしでモデルを実行できます。
 
 - モデルに関連付けられたより複雑な環境がある場合は、常に別のファイルに配置して、他のモデルで簡単に再利用できるようになります。
 
