@@ -114,6 +114,7 @@ func (nt *Network) AddPFCLayer(name string, nY, nX, nNeurY, nNeurX int, out bool
 	dp.SetClass("PFC")
 	sp.Gate.OutGate = out
 	dp.Gate.OutGate = out
+	dp.Dyns.MaintOnly()
 	dp.SetRelPos(relpos.Rel{Rel: relpos.Behind, Other: name, XAlign: relpos.Left, Space: 2})
 	pj := nt.ConnectLayers(sp, dp, prjn.NewOneToOne(), deep.BurstCtxt)
 	pj.SetClass("PFCToDeep")
@@ -149,7 +150,9 @@ func (nt *Network) AddPBWM(prefix string, nY, nMaint, nOut, nNeurBgY, nNeurBgX, 
 	if pfcMnt != nil {
 		pfcMnt.SetRelPos(relpos.Rel{Rel: relpos.Above, Other: mtxGo.Name(), YAlign: relpos.Front, XAlign: relpos.Left})
 	}
-	gpi.(*GPiThalLayer).SendToMatrixPFC(prefix) // sends gating to all these layers
+	gpl := gpi.(*GPiThalLayer)
+	gpl.SendToMatrixPFC(prefix) // sends gating to all these layers
+	gpl.SendGateShape()
 	return
 }
 
@@ -158,6 +161,72 @@ func (nt *Network) AddClampDaLayer(name string) *ClampDaLayer {
 	da := &ClampDaLayer{}
 	nt.AddLayerInit(da, name, []int{1, 1}, emer.Input)
 	return da
+}
+
+// AddTDLayers adds the standard TD temporal differences layers, generating a DA signal.
+// Projection from Rew to RewInteg is given class TDRewToInteg -- should
+// have no learning and 1 weight.
+func (nt *Network) AddTDLayers(prefix string, rel relpos.Relations, space float32) (rew, rp, ri, td emer.Layer) {
+	rew = &Layer{}
+	nt.AddLayerInit(rew, prefix+"Rew", []int{1, 1}, emer.Input)
+	rp = &TDRewPredLayer{}
+	nt.AddLayerInit(rp, prefix+"RewPred", []int{1, 1}, emer.Hidden)
+	ri = &TDRewIntegLayer{}
+	nt.AddLayerInit(ri, prefix+"RewInteg", []int{1, 1}, emer.Hidden)
+	td = &TDDaLayer{}
+	nt.AddLayerInit(td, prefix+"TD", []int{1, 1}, emer.Hidden)
+	ri.(*TDRewIntegLayer).RewInteg.RewPred = rp.Name()
+	td.(*TDDaLayer).RewInteg = ri.Name()
+	rp.SetRelPos(relpos.Rel{Rel: rel, Other: rew.Name(), YAlign: relpos.Front, Space: space})
+	ri.SetRelPos(relpos.Rel{Rel: rel, Other: rp.Name(), YAlign: relpos.Front, Space: space})
+	td.SetRelPos(relpos.Rel{Rel: rel, Other: ri.Name(), YAlign: relpos.Front, Space: space})
+
+	pj := nt.ConnectLayers(rew, ri, prjn.NewFull(), emer.Forward).(leabra.LeabraPrjn).AsLeabra()
+	pj.SetClass("TDRewToInteg")
+	pj.Learn.Learn = false
+	pj.WtInit.Mean = 1
+	pj.WtInit.Var = 0
+	pj.WtInit.Sym = false
+	// {Sel: ".TDRewToInteg", Desc: "rew to integ",
+	// 	Params: params.Params{
+	// 		"Prjn.Learn.Learn": "false",
+	// 		"Prjn.WtInit.Mean": "1",
+	// 		"Prjn.WtInit.Var":  "0",
+	// 		"Prjn.WtInit.Sym":  "false",
+	// 	}},
+	return
+}
+
+// AddRWLayers adds simple Rescorla-Wagner (PV only) dopamine system, with a primary
+// Reward layer, a RWPred prediction layer, and a dopamine layer that computes diff.
+// Only generates DA when Rew layer has external input -- otherwise zero.
+// Projection from RWPred to DA is given class RWPredToDA -- should
+// have no learning and 1 weight.
+func (nt *Network) AddRWLayers(prefix string, rel relpos.Relations, space float32) (rew, rp, da emer.Layer) {
+	rew = &Layer{}
+	nt.AddLayerInit(rew, prefix+"Rew", []int{1, 1}, emer.Input)
+	rp = &RWPredLayer{}
+	nt.AddLayerInit(rp, prefix+"RWPred", []int{1, 1}, emer.Hidden)
+	da = &RWDaLayer{}
+	nt.AddLayerInit(da, prefix+"DA", []int{1, 1}, emer.Hidden)
+	da.(*RWDaLayer).RewLay = rew.Name()
+	rp.SetRelPos(relpos.Rel{Rel: rel, Other: rew.Name(), YAlign: relpos.Front, Space: space})
+	da.SetRelPos(relpos.Rel{Rel: rel, Other: rp.Name(), YAlign: relpos.Front, Space: space})
+
+	pj := nt.ConnectLayers(rp, da, prjn.NewFull(), emer.Forward).(leabra.LeabraPrjn).AsLeabra()
+	pj.SetClass("RWPredToDA")
+	pj.Learn.Learn = false
+	pj.WtInit.Mean = 1
+	pj.WtInit.Var = 0
+	pj.WtInit.Sym = false
+	// {Sel: ".RWPredToDA", Desc: "rew to da",
+	// 	Params: params.Params{
+	// 		"Prjn.Learn.Learn": "false",
+	// 		"Prjn.WtInit.Mean": "1",
+	// 		"Prjn.WtInit.Var":  "0",
+	// 		"Prjn.WtInit.Sym":  "false",
+	// 	}},
+	return
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -170,12 +239,11 @@ func (nt *Network) AddClampDaLayer(name string) *ClampDaLayer {
 // PBWM calls GateSend after Cycle and before DeepBurst
 // Deep version adds call to update DeepBurst at end
 func (nt *Network) Cycle(ltime *leabra.Time) {
-	nt.Network.Cycle(ltime)
-	nt.GateSend(ltime)
-	nt.RecGateAct(ltime)
-	nt.DeepBurst(ltime)
-	nt.SendMods(ltime) // send modulators
-	// note C++ version had Act, ActPost, CycleStats, then DeepRaw
+	nt.Network.Network.Cycle(ltime) // basic version from leabra.Network (not deep.Network, which calls DeepBurst)
+	nt.GateSend(ltime)              // GateLayer (GPiThal) computes gating, sends to other layers
+	nt.RecGateAct(ltime)            // Record activation state at time of gating (in ActG neuron var)
+	nt.DeepBurst(ltime)             // Act -> Burst (during BurstQtr) (see deep for details)
+	nt.SendMods(ltime)              // send modulators (DA)
 }
 
 // GateSend is called at end of Cycle, computes Gating and sends to other layers
@@ -193,3 +261,6 @@ func (nt *Network) RecGateAct(ltime *leabra.Time) {
 func (nt *Network) SendMods(ltime *leabra.Time) {
 	nt.ThrLayFun(func(ly leabra.LeabraLayer) { ly.(PBWMLayer).SendMods(ltime) }, "SendMods")
 }
+
+//////////////////////////////////////////////////////////////////////////////////////
+//  Learn methods

@@ -29,9 +29,9 @@ import (
 // leabra.Layer has parameters for running a basic rate-coded Leabra layer
 type Layer struct {
 	LayerStru
-	Act     ActParams       `desc:"Activation parameters and methods for computing activations"`
-	Inhib   InhibParams     `desc:"Inhibition parameters and methods for computing layer-level inhibition"`
-	Learn   LearnNeurParams `desc:"Learning parameters and methods that operate at the neuron level"`
+	Act     ActParams       `view:"add-fields" desc:"Activation parameters and methods for computing activations"`
+	Inhib   InhibParams     `view:"add-fields" desc:"Inhibition parameters and methods for computing layer-level inhibition"`
+	Learn   LearnNeurParams `view:"add-fields" desc:"Learning parameters and methods that operate at the neuron level"`
 	Neurons []Neuron        `desc:"slice of neurons for this layer -- flat list of len = Shp.Len(). You must iterate over index and use pointer to modify values."`
 	Pools   []Pool          `desc:"inhibition and other pooled, aggregate state variables -- flat list has at least of 1 for layer, and one for each sub-pool (unit group) if shape supports that (4D).  You must iterate over index and use pointer to modify values."`
 	CosDiff CosDiffStats    `desc:"cosine difference between ActM, ActP stats"`
@@ -186,11 +186,13 @@ func (ly *Layer) UnitVal1DTry(varNm string, idx int) (float32, error) {
 // for projection into given sending layer and neuron 1D index,
 // for all receiving neurons in this layer,
 // into given float32 slice (only resized if not big enough).
+// prjnType is the string representation of the prjn type -- used if non-empty,
+// useful when there are multiple projections between two layers.
 // Returns error on invalid var name.
 // If the receiving neuron is not connected to the given sending layer or neuron
 // then the value is set to math32.NaN().
 // Returns error on invalid var name or lack of recv prjn (vals always set to nan on prjn err).
-func (ly *Layer) RecvPrjnVals(vals *[]float32, varNm string, sendLay emer.Layer, sendIdx1D int) error {
+func (ly *Layer) RecvPrjnVals(vals *[]float32, varNm string, sendLay emer.Layer, sendIdx1D int, prjnType string) error {
 	vidx, err := SynapseVarByName(varNm)
 	if err != nil {
 		return err
@@ -208,7 +210,15 @@ func (ly *Layer) RecvPrjnVals(vals *[]float32, varNm string, sendLay emer.Layer,
 	if sendLay == nil {
 		return fmt.Errorf("sending layer is nil")
 	}
-	pj, err := sendLay.SendPrjns().RecvNameTry(ly.Nm)
+	var pj emer.Prjn
+	if prjnType != "" {
+		pj, err = sendLay.SendPrjns().RecvNameTypeTry(ly.Nm, prjnType)
+		if pj == nil {
+			pj, err = sendLay.SendPrjns().RecvNameTry(ly.Nm)
+		}
+	} else {
+		pj, err = sendLay.SendPrjns().RecvNameTry(ly.Nm)
+	}
 	if pj == nil {
 		return err
 	}
@@ -226,11 +236,13 @@ func (ly *Layer) RecvPrjnVals(vals *[]float32, varNm string, sendLay emer.Layer,
 // for projection into given receiving layer and neuron 1D index,
 // for all sending neurons in this layer,
 // into given float32 slice (only resized if not big enough).
+// prjnType is the string representation of the prjn type -- used if non-empty,
+// useful when there are multiple projections between two layers.
 // Returns error on invalid var name.
 // If the sending neuron is not connected to the given receiving layer or neuron
 // then the value is set to math32.NaN().
 // Returns error on invalid var name or lack of recv prjn (vals always set to nan on prjn err).
-func (ly *Layer) SendPrjnVals(vals *[]float32, varNm string, recvLay emer.Layer, recvIdx1D int) error {
+func (ly *Layer) SendPrjnVals(vals *[]float32, varNm string, recvLay emer.Layer, recvIdx1D int, prjnType string) error {
 	vidx, err := SynapseVarByName(varNm)
 	if err != nil {
 		return err
@@ -248,7 +260,15 @@ func (ly *Layer) SendPrjnVals(vals *[]float32, varNm string, recvLay emer.Layer,
 	if recvLay == nil {
 		return fmt.Errorf("receiving layer is nil")
 	}
-	pj, err := recvLay.RecvPrjns().SendNameTry(ly.Nm)
+	var pj emer.Prjn
+	if prjnType != "" {
+		pj, err = recvLay.RecvPrjns().SendNameTypeTry(ly.Nm, prjnType)
+		if pj == nil {
+			pj, err = recvLay.RecvPrjns().SendNameTry(ly.Nm)
+		}
+	} else {
+		pj, err = recvLay.RecvPrjns().SendNameTry(ly.Nm)
+	}
 	if pj == nil {
 		return err
 	}
@@ -426,13 +446,25 @@ func (ly *Layer) SetWts(lw *weights.Layer) error {
 		}
 	}
 	var err error
-	for pi := range lw.Prjns {
-		pw := &lw.Prjns[pi]
-		pj := ly.RecvPrjns().SendName(pw.From)
-		if pj != nil {
+	rpjs := ly.RecvPrjns()
+	if len(lw.Prjns) == len(*rpjs) { // this is essential if multiple prjns from same layer
+		for pi := range lw.Prjns {
+			pw := &lw.Prjns[pi]
+			pj := (*rpjs)[pi]
 			er := pj.SetWts(pw)
 			if er != nil {
 				err = er
+			}
+		}
+	} else {
+		for pi := range lw.Prjns {
+			pw := &lw.Prjns[pi]
+			pj := rpjs.SendName(pw.From)
+			if pj != nil {
+				er := pj.SetWts(pw)
+				if er != nil {
+					err = er
+				}
 			}
 		}
 	}
@@ -768,6 +800,7 @@ func (ly *Layer) AlphaCycInit() {
 		ly.LeabraLay.GenNoise()
 	}
 	ly.LeabraLay.DecayState(ly.Act.Init.Decay)
+	ly.LeabraLay.InitGInc()
 	if ly.Act.Clamp.Hard && ly.Typ == emer.Input {
 		ly.LeabraLay.HardClamp()
 	}
@@ -838,7 +871,8 @@ func (ly *Layer) GenNoise() {
 	}
 }
 
-// DecayState decays activation state by given proportion (default is on ly.Act.Init.Decay)
+// DecayState decays activation state by given proportion (default is on ly.Act.Init.Decay).
+// This does *not* call InitGInc -- must call that separately at start of AlphaCyc
 func (ly *Layer) DecayState(decay float32) {
 	for ni := range ly.Neurons {
 		nrn := &ly.Neurons[ni]

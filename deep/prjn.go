@@ -8,16 +8,19 @@ import (
 	"github.com/chewxy/math32"
 	"github.com/emer/emergent/emer"
 	"github.com/emer/leabra/leabra"
+	"github.com/goki/ki/ki"
 	"github.com/goki/ki/kit"
 )
 
 // deep.Prjn is the DeepLeabra projection, based on basic rate-coded leabra.Prjn
 type Prjn struct {
 	leabra.Prjn             // access as .Prjn
-	CtxtGeInc     []float32 `desc:"local per-recv unitaccumulator for Ctxt excitatory conductance from sending units -- not a delta -- the full value"`
-	TRCBurstGeInc []float32 `desc:"local per-recv unitincrement accumulator for TRCBurstGe excitatory conductance from sending units -- this will be thread-safe"`
+	CtxtGeInc     []float32 `desc:"local per-recv unit accumulator for Ctxt excitatory conductance from sending units -- not a delta -- the full value"`
+	TRCBurstGeInc []float32 `desc:"local per-recv unit increment accumulator for TRCBurstGe excitatory conductance from sending units -- this will be thread-safe"`
 	AttnGeInc     []float32 `desc:"local per-recv unit increment accumulator for AttnGe excitatory conductance from sending units -- this will be thread-safe"`
 }
+
+var KiT_Prjn = kit.Types.AddType(&Prjn{}, PrjnProps)
 
 func (pj *Prjn) Defaults() {
 	pj.Prjn.Defaults()
@@ -27,16 +30,17 @@ func (pj *Prjn) UpdateParams() {
 	pj.Prjn.UpdateParams()
 }
 
-func (pj *Prjn) Class() string {
-	switch pj.Typ {
-	case BurstCtxt:
-		return "BurstCtxt " + pj.Cls
-	case BurstTRC:
-		return "BurstTRC " + pj.Cls
-	case DeepAttn:
-		return "DeepAttn " + pj.Cls
+func (pj *Prjn) PrjnTypeName() string {
+	if pj.Typ < emer.PrjnTypeN {
+		return pj.Typ.String()
 	}
-	return pj.Typ.String() + " " + pj.Cls
+	ptyp := PrjnType(pj.Typ)
+	ts := ptyp.String()
+	sz := len(ts)
+	if sz > 0 {
+		return ts[:sz-1] // cut off trailing _
+	}
+	return ""
 }
 
 func (pj *Prjn) Build() error {
@@ -207,11 +211,12 @@ func (pj *Prjn) DWtDeepCtxt() {
 //////////////////////////////////////////////////////////////////////////////////////
 //  PrjnType
 
-// DeepLeabra extensions to the emer.PrjnType types
+// PrjnType has the DeepLeabra extensions to the emer.PrjnType types, for gui
+type PrjnType emer.PrjnType
 
 //go:generate stringer -type=PrjnType
 
-var KiT_PrjnType = kit.Enums.AddEnum(PrjnTypeN, false, nil)
+var KiT_PrjnType = kit.Enums.AddEnumExt(emer.KiT_PrjnType, PrjnTypeN, false, nil)
 
 // The DeepLeabra prjn types
 const (
@@ -235,6 +240,16 @@ const (
 	// This is sent continuously all the time from deep layers using the standard delta-based
 	// Ge computation, and aggregated into the AttnGe variable on Super neurons.
 	DeepAttn
+)
 
+// gui versions
+const (
+	BurstCtxt_ PrjnType = PrjnType(emer.PrjnTypeN) + iota
+	BurstTRC_
+	DeepAttn_
 	PrjnTypeN
 )
+
+var PrjnProps = ki.Props{
+	"EnumType:Typ": KiT_PrjnType,
+}

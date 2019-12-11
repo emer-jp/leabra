@@ -5,7 +5,9 @@
 package pbwm
 
 import (
+	"github.com/emer/leabra/deep"
 	"github.com/emer/leabra/leabra"
+	"github.com/goki/ki/kit"
 )
 
 // MatrixParams has parameters for Dorsal Striatum Matrix computation
@@ -43,9 +45,11 @@ type MatrixLayer struct {
 	GateLayer
 	MaintN      int            `desc:"number of Maint Pools in X outer dimension of 4D shape -- Out gating after that"`
 	DaR         DaReceptors    `desc:"dominant type of dopamine receptor -- D1R for Go pathway, D2R for NoGo"`
-	Matrix      MatrixParams   `desc:"matrix parameters"`
+	Matrix      MatrixParams   `view:"inline" desc:"matrix parameters"`
 	MatrixNeurs []MatrixNeuron `desc:"slice of MatrixNeuron state for this layer -- flat list of len = Shape.Len().  You must iterate over index and use pointer to modify values."`
 }
+
+var KiT_MatrixLayer = kit.Types.AddType(&MatrixLayer{}, deep.LayerProps)
 
 // Defaults in param.Sheet format
 // Sel: "MatrixLayer", Desc: "defaults",
@@ -64,6 +68,7 @@ type MatrixLayer struct {
 func (ly *MatrixLayer) Defaults() {
 	ly.GateLayer.Defaults()
 	ly.Matrix.Defaults()
+	ly.DeepBurst.SetBurstQtr(leabra.Q2) // also
 	// special inhib params
 	ly.Inhib.Layer.Gi = 1.9
 	ly.Inhib.Layer.FB = 0.5
@@ -233,4 +238,12 @@ func (ly *MatrixLayer) RecGateAct(ltime *leabra.Time) {
 			mnr.ActG = nrn.Act
 		}
 	}
+}
+
+// DoQuarter2DWt indicates whether to do optional Q2 DWt
+func (ly *MatrixLayer) DoQuarter2DWt() bool {
+	if !ly.DeepBurst.On || !ly.DeepBurst.IsBurstQtr(1) {
+		return false
+	}
+	return true
 }

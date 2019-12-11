@@ -12,18 +12,21 @@ import (
 	"github.com/emer/emergent/emer"
 	"github.com/emer/etable/etensor"
 	"github.com/emer/leabra/leabra"
+	"github.com/goki/ki/ki"
 	"github.com/goki/ki/kit"
 )
 
 // deep.Layer is the DeepLeabra layer, based on basic rate-coded leabra.Layer
 type Layer struct {
 	leabra.Layer             // access as .Layer
-	DeepBurst    BurstParams `desc:"parameters for computing Burst from act, in Superficial layers (but also needed in Deep layers for deep self connections)"`
-	DeepTRC      TRCParams   `desc:"parameters for computing TRC plus-phase (outcome) activations based on TRCBurstGe excitatory input from BurstTRC projections"`
-	DeepAttn     AttnParams  `desc:"parameters for computing DeepAttn and DeepLrn attentional modulation signals based on DeepAttn projection inputs integrated into AttnGe excitatory conductances"`
+	DeepBurst    BurstParams `view:"inline" desc:"parameters for computing Burst from act, in Superficial layers (but also needed in Deep layers for deep self connections)"`
+	DeepTRC      TRCParams   `view:"inline" desc:"parameters for computing TRC plus-phase (outcome) activations based on TRCBurstGe excitatory input from BurstTRC projections"`
+	DeepAttn     AttnParams  `view:"inline" desc:"parameters for computing DeepAttn and DeepLrn attentional modulation signals based on DeepAttn projection inputs integrated into AttnGe excitatory conductances"`
 	DeepNeurs    []Neuron    `desc:"slice of extra deep.Neuron state for this layer -- flat list of len = Shape.Len(). You must iterate over index and use pointer to modify values."`
 	DeepPools    []Pool      `desc:"extra layer and sub-pool (unit group) statistics used in DeepLeabra -- flat list has at least of 1 for layer, and one for each sub-pool (unit group) if shape supports that (4D).  You must iterate over index and use pointer to modify values."`
 }
+
+var KiT_Layer = kit.Types.AddType(&Layer{}, LayerProps)
 
 // AsDeep returns this layer as a deep.Layer
 func (ly *Layer) AsDeep() *Layer {
@@ -245,9 +248,6 @@ func (ly *Layer) DecayState(decay float32) {
 	for ni := range ly.DeepNeurs {
 		dnr := &ly.DeepNeurs[ni]
 		dnr.ActNoAttn -= decay * (dnr.ActNoAttn - ly.Act.Init.Act)
-		dnr.BurstSent = 0
-		dnr.TRCBurstGe = 0
-		dnr.AttnGe = 0
 	}
 }
 
@@ -284,17 +284,16 @@ func (ly *Layer) SendGDelta(ltime *leabra.Time) {
 					if sp.IsOff() {
 						continue
 					}
-					pj := sp.(DeepPrjn)
-					ptyp := pj.Type()
+					ptyp := sp.Type()
 					if ptyp == BurstCtxt || ptyp == BurstTRC {
 						continue
 					}
 					if ptyp == DeepAttn {
 						if ly.DeepAttn.On {
-							pj.SendAttnGeDelta(ni, delta)
+							sp.(DeepPrjn).SendAttnGeDelta(ni, delta)
 						}
 					} else {
-						pj.SendGDelta(ni, delta)
+						sp.(leabra.LeabraPrjn).SendGDelta(ni, delta)
 					}
 				}
 				nrn.ActSent = nrn.Act
@@ -305,17 +304,16 @@ func (ly *Layer) SendGDelta(ltime *leabra.Time) {
 				if sp.IsOff() {
 					continue
 				}
-				pj := sp.(DeepPrjn)
-				ptyp := pj.Type()
+				ptyp := sp.Type()
 				if ptyp == BurstCtxt || ptyp == BurstTRC {
 					continue
 				}
 				if ptyp == DeepAttn {
 					if ly.DeepAttn.On {
-						pj.SendAttnGeDelta(ni, delta)
+						sp.(DeepPrjn).SendAttnGeDelta(ni, delta)
 					}
 				} else {
-					pj.SendGDelta(ni, delta)
+					sp.(leabra.LeabraPrjn).SendGDelta(ni, delta)
 				}
 			}
 			nrn.ActSent = 0
@@ -359,18 +357,25 @@ func (ly *Layer) GFmInc(ltime *leabra.Time) {
 		return
 	}
 	ly.GFmIncNeur(ltime) // regular
-	if ly.DeepAttn.On {
-		for _, p := range ly.RcvPrjns {
-			if p.IsOff() {
-				continue
-			}
-			pj := p.(DeepPrjn)
-			ptyp := pj.Type()
-			if ptyp != DeepAttn {
-				continue
-			}
-			pj.RecvAttnGeInc()
+	ly.LeabraLay.(DeepLayer).AttnGeInc(ltime)
+}
+
+// AttnGeInc integrates new AttnGe from increments sent during last SendGDelta.
+// Very low overhead if no DeepAttn prjns.
+func (ly *Layer) AttnGeInc(ltime *leabra.Time) {
+	for _, p := range ly.RcvPrjns {
+		if p.IsOff() {
+			continue
 		}
+		pj, ok := p.(DeepPrjn)
+		if !ok {
+			continue
+		}
+		ptyp := pj.Type()
+		if ptyp != DeepAttn {
+			continue
+		}
+		pj.RecvAttnGeInc()
 	}
 }
 
@@ -505,9 +510,12 @@ func (ly *Layer) SendTRCBurstGeDelta(ltime *leabra.Time) {
 					if sp.IsOff() {
 						continue
 					}
-					pj := sp.(DeepPrjn)
-					ptyp := pj.Type()
+					ptyp := sp.Type()
 					if ptyp != BurstTRC {
+						continue
+					}
+					pj, ok := sp.(DeepPrjn)
+					if !ok {
 						continue
 					}
 					pj.SendTRCBurstGeDelta(ni, delta)
@@ -520,9 +528,12 @@ func (ly *Layer) SendTRCBurstGeDelta(ltime *leabra.Time) {
 				if sp.IsOff() {
 					continue
 				}
-				pj := sp.(DeepPrjn)
-				ptyp := pj.Type()
+				ptyp := sp.Type()
 				if ptyp != BurstTRC {
+					continue
+				}
+				pj, ok := sp.(DeepPrjn)
+				if !ok {
 					continue
 				}
 				pj.SendTRCBurstGeDelta(ni, delta)
@@ -541,9 +552,12 @@ func (ly *Layer) TRCBurstGeFmInc(ltime *leabra.Time) {
 		if p.IsOff() {
 			continue
 		}
-		pj := p.(DeepPrjn)
-		ptyp := pj.Type()
+		ptyp := p.Type()
 		if ptyp != BurstTRC {
+			continue
+		}
+		pj, ok := p.(DeepPrjn)
+		if !ok {
 			continue
 		}
 		pj.RecvTRCBurstGeInc()
@@ -586,9 +600,12 @@ func (ly *Layer) SendCtxtGe(ltime *leabra.Time) {
 				if sp.IsOff() {
 					continue
 				}
-				pj := sp.(DeepPrjn)
-				ptyp := pj.Type()
+				ptyp := sp.Type()
 				if ptyp != BurstCtxt {
+					continue
+				}
+				pj, ok := sp.(DeepPrjn)
+				if !ok {
 					continue
 				}
 				pj.SendCtxtGe(ni, dnr.Burst)
@@ -612,9 +629,12 @@ func (ly *Layer) CtxtFmGe(ltime *leabra.Time) {
 		if p.IsOff() {
 			continue
 		}
-		pj := p.(DeepPrjn)
-		ptyp := pj.Type()
+		ptyp := p.Type()
 		if ptyp != BurstCtxt {
+			continue
+		}
+		pj, ok := p.(DeepPrjn)
+		if !ok {
 			continue
 		}
 		pj.RecvCtxtGeInc()
@@ -641,15 +661,17 @@ func (ly *Layer) BurstPrv(ltime *leabra.Time) {
 //////////////////////////////////////////////////////////////////////////////////////
 //  LayerType
 
-// DeepLeabra extensions to the emer.LayerType types
+// note: need to define a new type for these extensions for the GUI interface,
+// but need to use the *old type* in the code, so we have this unfortunate
+// redundancy here.
 
-// todo: this does not work to generate strings for add-on types..
-// need to modify stringer
+// LayerType has the DeepLeabra extensions to the emer.LayerType types, for gui
+type LayerType emer.LayerType
+
 //go:generate stringer -type=LayerType
 
-var KiT_LayerType = kit.Enums.AddEnum(LayerTypeN, false, nil)
+var KiT_LayerType = kit.Enums.AddEnumExt(emer.KiT_LayerType, LayerTypeN, false, nil)
 
-// The DeepLeabra layer types
 const (
 	// Deep are deep-layer neurons, reflecting activation of layer 6 regular spiking
 	// CT corticothalamic neurons, which drive both attention in Super (via DeepAttn
@@ -661,6 +683,43 @@ const (
 	// projections from corresponding Super layer neurons that provide strong driving inputs to
 	// TRC neurons.
 	TRC
+)
 
+// gui versions
+const (
+	Deep_ LayerType = LayerType(emer.LayerTypeN) + iota
+	TRC_
 	LayerTypeN
 )
+
+var LayerProps = ki.Props{
+	"EnumType:Typ": KiT_LayerType,
+	"ToolBar": ki.PropSlice{
+		{"Defaults", ki.Props{
+			"icon": "reset",
+			"desc": "return all parameters to their intial default values",
+		}},
+		{"InitWts", ki.Props{
+			"icon": "update",
+			"desc": "initialize the layer's weight values according to prjn parameters, for all *sending* projections out of this layer",
+		}},
+		{"InitActs", ki.Props{
+			"icon": "update",
+			"desc": "initialize the layer's activation values",
+		}},
+		{"sep-act", ki.BlankProp{}},
+		{"LesionNeurons", ki.Props{
+			"icon": "close",
+			"desc": "Lesion (set the Off flag) for given proportion of neurons in the layer (number must be 0 -- 1, NOT percent!)",
+			"Args": ki.PropSlice{
+				{"Proportion", ki.Props{
+					"desc": "proportion (0 -- 1) of neurons to lesion",
+				}},
+			},
+		}},
+		{"UnLesionNeurons", ki.Props{
+			"icon": "reset",
+			"desc": "Un-Lesion (reset the Off flag) for all neurons in the layer",
+		}},
+	},
+}

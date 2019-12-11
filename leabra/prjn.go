@@ -17,14 +17,16 @@ import (
 	"github.com/emer/emergent/weights"
 	"github.com/emer/etable/etensor"
 	"github.com/goki/ki/indent"
+	"github.com/goki/ki/ki"
+	"github.com/goki/ki/kit"
 )
 
 // leabra.Prjn is a basic Leabra projection with synaptic learning parameters
 type Prjn struct {
 	PrjnStru
 	WtInit  WtInitParams   `view:"inline" desc:"initial random weight distribution"`
-	WtScale WtScaleParams  `desc:"weight scaling parameters: modulates overall strength of projection, using both absolute and relative factors"`
-	Learn   LearnSynParams `desc:"synaptic-level learning parameters"`
+	WtScale WtScaleParams  `view:"inline" desc:"weight scaling parameters: modulates overall strength of projection, using both absolute and relative factors"`
+	Learn   LearnSynParams `view:"add-fields" desc:"synaptic-level learning parameters"`
 	Syns    []Synapse      `desc:"synaptic state values, ordered by the sending layer units which owns them -- one-to-one with SConIdx array"`
 
 	// misc state variables below:
@@ -32,6 +34,10 @@ type Prjn struct {
 	GInc   []float32       `desc:"local per-recv unit increment accumulator for synaptic conductance from sending units -- goes to either GeInc or GiInc on neuron depending on projection type -- this will be thread-safe"`
 	WbRecv []WtBalRecvPrjn `desc:"weight balance state variables for this projection, one per recv neuron"`
 }
+
+var KiT_Prjn = kit.Types.AddType(&Prjn{}, PrjnProps)
+
+var PrjnProps = ki.Props{}
 
 // AsLeabra returns this prjn as a leabra.Prjn -- all derived prjns must redefine
 // this to return the base Prjn type, so that the LeabraPrjn interface does not

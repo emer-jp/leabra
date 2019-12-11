@@ -6,8 +6,10 @@ package pbwm
 
 import (
 	"github.com/emer/etable/minmax"
+	"github.com/emer/leabra/deep"
 	"github.com/emer/leabra/leabra"
 	"github.com/goki/ki/ints"
+	"github.com/goki/ki/kit"
 )
 
 // GateShape defines the shape of the outer pool dimensions of gating layers,
@@ -15,10 +17,9 @@ import (
 // with Maint first (to the left) then Out.  Individual layers may only
 // represent Maint or Out subsets of this overall shape, but all need
 // to have this coordinated shape information to be able to share gating
-// state information.  Indexes into GateStates for MaintOut combined layers
-// are organized so that all of the states for Maint are first and arranged
-// as they would be in a pure Maint layer, and likewise for the subsequent
-// Out states.
+// state information.  Each layer represents gate state information in
+// their native geometry -- FullIndex1D provides access from a subset
+// to full set.
 type GateShape struct {
 	Y      int `desc:"overall shape dimensions for the full set of gating pools, e.g., as present in the Matrix and GPiThal levels"`
 	MaintX int `desc:"how many pools in the X dimension are Maint gating pools -- rest are Out"`
@@ -39,10 +40,7 @@ func (gs *GateShape) TotX() int {
 }
 
 // Index returns the index into GateStates for given 2D pool coords
-// for given GateType.  For Maint and Out, it is just the basic pool
-// index (0-based) for a layer of that shape, but for MaintOut layers
-// that have both types, it obeys the separation between Maint (first)
-// and Out (second).
+// for given GateType.  Each type stores gate info in its "native" 2D format.
 func (gs *GateShape) Index(pY, pX int, typ GateTypes) int {
 	switch typ {
 	case Maint:
@@ -56,28 +54,9 @@ func (gs *GateShape) Index(pY, pX int, typ GateTypes) int {
 		}
 		return pY*gs.OutX + pX
 	case MaintOut:
-		if pX < gs.MaintX {
-			return pY*gs.MaintX + pX
-		} else {
-			return pY*gs.OutX + (pX - gs.MaintX)
-		}
+		return pY*gs.TotX() + pX
 	}
 	return 0
-}
-
-// Index1D returns the index into GateStates for given 1D pool idx (0-based)
-// appropriate for given GateType. For Maint and Out, it is just the
-// input index, but for MaintOut layers that have both types,
-// it obeys the separation between Maint (first) and Out (second).
-func (gs *GateShape) Index1D(idx int, typ GateTypes) int {
-	if typ != MaintOut {
-		return idx
-	}
-	// convert to 2D and use that
-	tX := gs.TotX()
-	pY := idx / tX
-	pX := idx % tX
-	return gs.Index(pY, pX, typ)
 }
 
 // FullIndex1D returns the index into full MaintOut GateStates
@@ -85,7 +64,13 @@ func (gs *GateShape) Index1D(idx int, typ GateTypes) int {
 func (gs *GateShape) FullIndex1D(idx int, fmTyp GateTypes) int {
 	switch fmTyp {
 	case Maint:
-		return idx
+		if gs.MaintX == 0 {
+			return 0
+		}
+		// convert to 2D and use that
+		pY := idx / gs.MaintX
+		pX := idx % gs.MaintX
+		return gs.Index(pY, pX, MaintOut)
 	case Out:
 		if gs.OutX == 0 {
 			return 0
@@ -95,7 +80,7 @@ func (gs *GateShape) FullIndex1D(idx int, fmTyp GateTypes) int {
 		pX := idx%gs.OutX + gs.MaintX
 		return gs.Index(pY, pX, MaintOut)
 	case MaintOut:
-		return gs.Index1D(idx, MaintOut)
+		return idx
 	}
 	return 0
 }
@@ -137,6 +122,8 @@ type GateLayer struct {
 	GateStates []GateState `desc:"slice of gating state values for this layer, one for each separate gating pool, according to its GateType.  For MaintOut, it is ordered such that 0:MaintN are Maint and MaintN:n are Out"`
 }
 
+var KiT_GateLayer = kit.Types.AddType(&GateLayer{}, deep.LayerProps)
+
 func (ly *GateLayer) AsGate() *GateLayer {
 	return ly
 }
@@ -149,14 +136,12 @@ func (ly *GateLayer) GateShape() *GateShape {
 
 // GateState returns the GateState for given pool index (0 based) on this layer
 func (ly *GateLayer) GateState(poolIdx int) *GateState {
-	myt := ly.LeabraLay.(GateLayerer).GateType()
-	return &ly.GateStates[ly.GateShp.Index1D(poolIdx, myt)]
+	return &ly.GateStates[poolIdx]
 }
 
 // SetGateState sets the GateState for given pool index (individual pools start at 1) on this layer
 func (ly *GateLayer) SetGateState(poolIdx int, state *GateState) {
-	myt := ly.LeabraLay.(GateLayerer).GateType()
-	gs := &ly.GateStates[ly.GateShp.Index1D(poolIdx, myt)]
+	gs := &ly.GateStates[poolIdx]
 	gs.CopyFrom(state)
 }
 
@@ -176,7 +161,8 @@ func (ly *GateLayer) SetGateStates(states []GateState, typ GateTypes) {
 		mx := len(ly.GateStates)
 		for i := 0; i < mx; i++ {
 			gs := &ly.GateStates[i]
-			src := &states[ly.GateShp.FullIndex1D(i, myt)]
+			si := ly.GateShp.FullIndex1D(i, myt)
+			src := &states[si]
 			gs.CopyFrom(src)
 		}
 	}
@@ -262,3 +248,26 @@ type GateLayerer interface {
 	// SetGateStates sets the GateStates from given source states, of given gating type
 	SetGateStates(states []GateState, typ GateTypes)
 }
+
+// GateTypes for region of striatum
+type GateTypes int
+
+//go:generate stringer -type=GateTypes
+
+var KiT_GateTypes = kit.Enums.AddEnum(GateTypesN, false, nil)
+
+func (ev GateTypes) MarshalJSON() ([]byte, error)  { return kit.EnumMarshalJSON(ev) }
+func (ev *GateTypes) UnmarshalJSON(b []byte) error { return kit.EnumUnmarshalJSON(ev, b) }
+
+const (
+	// Maint is maintenance gating -- toggles active maintenance in PFC
+	Maint GateTypes = iota
+
+	// Out is output gating -- drives deep layer activation
+	Out
+
+	// MaintOut for maint and output gating
+	MaintOut
+
+	GateTypesN
+)

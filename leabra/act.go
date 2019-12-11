@@ -11,6 +11,7 @@ import (
 	"github.com/emer/leabra/chans"
 	"github.com/emer/leabra/knadapt"
 	"github.com/emer/leabra/nxx1"
+	"github.com/goki/gi/mat32"
 	"github.com/goki/ki/ints"
 	"github.com/goki/ki/kit"
 )
@@ -94,7 +95,6 @@ func (ac *ActParams) DecayState(nrn *Neuron, decay float32) {
 	}
 	nrn.ActDel = 0
 	nrn.Inet = 0
-	ac.InitGInc(nrn)
 }
 
 // InitActs initializes activation state in neuron -- called during InitWts but otherwise not
@@ -311,7 +311,7 @@ func (ai *ActInitParams) Defaults() {
 // DtParams are time and rate constants for temporal derivatives in Leabra (Vm, net input)
 type DtParams struct {
 	Integ  float32 `def:"1,0.5" min:"0" desc:"overall rate constant for numerical integration, for all equations at the unit level -- all time constants are specified in millisecond units, with one cycle = 1 msec -- if you instead want to make one cycle = 2 msec, you can do this globally by setting this integ value to 2 (etc).  However, stability issues will likely arise if you go too high.  For improved numerical stability, you may even need to reduce this value to 0.5 or possibly even lower (typically however this is not necessary).  MUST also coordinate this with network.time_inc variable to ensure that global network.time reflects simulated time accurately"`
-	VmTau  float32 `def:"2.81:10" min:"1" desc:"[3.3 std for rate code, 2.81 for spiking] membrane potential and rate-code activation time constant in cycles, which should be milliseconds typically (roughly, how long it takes for value to change significantly -- 1.4x the half-life) -- reflects the capacitance of the neuron in principle -- biological default for AeEx spiking model C = 281 pF = 2.81 normalized -- for rate-code activation, this also determines how fast to integrate computed activation values over time"`
+	VmTau  float32 `def:"3.3" min:"1" desc:"membrane potential and rate-code activation time constant in cycles, which should be milliseconds typically (roughly, how long it takes for value to change significantly -- 1.4x the half-life) -- reflects the capacitance of the neuron in principle -- biological default for AdEx spiking model C = 281 pF = 2.81 normalized -- for rate-code activation, this also determines how fast to integrate computed activation values over time"`
 	GTau   float32 `def:"1.4,3,5" min:"1" desc:"time constant for integrating synaptic conductances, in cycles, which should be milliseconds typically (roughly, how long it takes for value to change significantly -- 1.4x the half-life) -- this is important for damping oscillations -- generally reflects time constants associated with synaptic channels which are not modeled in the most abstract rate code models (set to 1 for detailed spiking models with more realistic synaptic currents) -- larger values (e.g., 3) can be important for models with higher conductances that otherwise might be more prone to oscillation."`
 	AvgTau float32 `def:"200" desc:"for integrating activation average (ActAvg), time constant in trials (roughly, how long it takes for value to change significantly) -- used mostly for visualization and tracking *hog* units"`
 
@@ -458,15 +458,16 @@ func (ws *WtScaleParams) Update() {
 // for purposes of computing scaling factors with partial connectivity
 // For 25% layer activity, binomial SEM = sqrt(p(1-p)) = .43, so 3x = 1.3 so 2 is a reasonable default.
 func (ws *WtScaleParams) SLayActScale(savg, snu, ncon float32) float32 {
+	ncon = math32.Max(ncon, 1) // prjn Avg can be < 1 in some cases
 	semExtra := 2
-	slayActN := int(savg*snu + .5) // sending layer actual # active
+	slayActN := int(mat32.Round(savg * snu)) // sending layer actual # active
 	slayActN = ints.MaxInt(slayActN, 1)
 	var sc float32
 	if ncon == snu {
 		sc = 1 / float32(slayActN)
 	} else {
 		rMaxActN := int(math32.Min(ncon, float32(slayActN))) // max number we could get
-		rAvgActN := int(savg*ncon + .5)                      // recv average actual # active if uniform
+		rAvgActN := int(mat32.Round(savg * ncon))            // recv average actual # active if uniform
 		rAvgActN = ints.MaxInt(rAvgActN, 1)
 		rExpActN := rAvgActN + semExtra // expected
 		rExpActN = ints.MinInt(rExpActN, rMaxActN)
